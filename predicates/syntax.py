@@ -161,35 +161,35 @@ class Term:
             that entire name (and not just a part of it, such as ``'x1'``).
         """
         # Task 7.3a
-        i = 0
-        while i < len(string) and (string[i].isalnum() or string[i] == '_'):
-            i += 1
-        if i > 0:
-            name = string[:i]
-            if is_constant(name) or is_variable(name):
-                return Term(name), string[i:]
-        j = 0
-        while j < len(string) and string[j].isalnum():
-            j += 1
-        assert j > 0, f"No function name found at start of '{string}'"
-        func_name = string[:j]
-        assert is_function(func_name), f"'{func_name}' is not a function name"
-        assert j < len(string) and string[j] == '(', f"Expected '(' after function name '{func_name}', got '{string[j] if j < len(string) else 'EOF'}'"
-        remaining = string[j+1:]
-        args = []
-        while True:
-            if not remaining:
-                raise ValueError(f"Unexpected end of string while parsing arguments of {func_name}")
-            arg, remaining = Term._parse_prefix(remaining)
-            args.append(arg)
-            if not remaining:
-                raise ValueError(f"Unexpected end of string after parsing argument of {func_name}")
-            if remaining[0] == ')':
-                remaining = remaining[1:]
-                break
-            assert remaining[0] == ',', f"Expected ',' or ')', got '{remaining[0]}'"
-            remaining = remaining[1:]
-        return Term(func_name, args), remaining
+        if not string:
+            return None
+        # constant or variable: read longest alnum prefix (or '_')
+        if string[0] == '_':
+            return Term('_'), string[1:]
+        if is_constant(string[0]) or is_variable(string[0]):
+            i = 0
+            while i < len(string) and string[i].isalnum():
+                i += 1
+            return Term(string[:i]), string[i:]
+        if is_function(string[0]):
+            i = 0
+            while i < len(string) and string[i].isalnum():
+                i += 1
+            func_name = string[:i]
+            rest = string[i:]
+            assert rest[0] == '('
+            rest = rest[1:]
+            args = []
+            while True:
+                arg, rest = Term._parse_prefix(rest)
+                args.append(arg)
+                if rest[0] == ')':
+                    rest = rest[1:]
+                    break
+                assert rest[0] == ','
+                rest = rest[1:]
+            return Term(func_name, args), rest
+        return None
 
     @staticmethod
     def parse(string: str) -> Term:
@@ -496,50 +496,62 @@ class Formula:
         """
         # Task 7.4a
         if not string:
-            raise ValueError("Empty string")
-        if string[0] in ('A', 'E'):
-            quantifier = string[0]
-            i = 1
-            while i < len(string) and (string[i].isalnum()):
+            return None
+        ch = string[0]
+        if is_unary(ch):
+            first, rest = Formula._parse_prefix(string[1:])
+            return Formula('~', first), rest
+        if ch == '(':
+            first, rest = Formula._parse_prefix(string[1:])
+            # parse operator
+            if rest.startswith('->'):
+                op = '->'
+                rest = rest[2:]
+            else:
+                op = rest[0]
+                rest = rest[1:]
+            second, rest = Formula._parse_prefix(rest)
+            assert rest[0] == ')'
+            return Formula(op, first, second), rest[1:]
+        if is_quantifier(ch):
+            quantifier = ch
+            rest = string[1:]
+            i = 0
+            while i < len(rest) and rest[i].isalnum():
                 i += 1
-            assert i > 1, f"No variable name after quantifier {quantifier}"
-            var_name = string[1:i]
-            assert is_variable(var_name), f"'{var_name}' is not a variable name"
-            assert i < len(string) and string[i] == '[', f"Expected '[' after {quantifier}{var_name}, got '{string[i] if i < len(string) else 'EOF'}'"
-            formula, remaining = Formula._parse_prefix(string[i+1:])
-            assert remaining and remaining[0] == ']', f"Expected ']' after formula, got '{remaining[0] if remaining else 'EOF'}'"
-            remaining = remaining[1:]
-            return Formula(quantifier, var_name, formula), remaining
-        if string[0] == '~':
-            formula, remaining = Formula._parse_prefix(string[1:])
-            return Formula('~', formula), remaining
-        if string[0] == '(':
-            formula, remaining = Formula._parse_prefix(string[1:])
-            assert remaining and remaining[0] == ')', f"Expected ')', got '{remaining[0] if remaining else 'EOF'}'"
-            remaining = remaining[1:]
-            if remaining and remaining[0] in ('&', '|') or (len(remaining) >= 2 and remaining[:2] == '->'):
-                if remaining[0] in ('&', '|'):
-                    op = remaining[0]
-                    formula2, remaining2 = Formula._parse_prefix(remaining[1:])
-                    return Formula(op, formula, formula2), remaining2
-                else:
-                    formula2, remaining2 = Formula._parse_prefix(remaining[2:])
-                    return Formula('->', formula, formula2), remaining2
-            return formula, remaining
-        term1, remaining = Term._parse_prefix(string)
-        if remaining and remaining[0] == '=':
-            term2, remaining2 = Term._parse_prefix(remaining[1:])
-            return Formula('=', [term1, term2]), remaining2
-        if remaining and remaining[0] in ('&', '|'):
-            op = remaining[0]
-            formula2, remaining2 = Formula._parse_prefix(remaining[1:])
-            return Formula(op, term1, formula2), remaining2
-        if len(remaining) >= 2 and remaining[:2] == '->':
-            formula2, remaining2 = Formula._parse_prefix(remaining[2:])
-            return Formula('->', term1, formula2), remaining2
-        if is_relation(term1.root):
-            return Formula(term1.root, term1.arguments), remaining
-        raise ValueError(f"Invalid formula: expected =, relation, or operator after '{term1}', got '{remaining[:10]}'")
+            var = rest[:i]
+            rest = rest[i:]
+            assert rest[0] == '['
+            rest = rest[1:]
+            stmt, rest = Formula._parse_prefix(rest)
+            assert rest[0] == ']'
+            return Formula(quantifier, var, stmt), rest[1:]
+        if is_relation(ch):
+            i = 0
+            while i < len(string) and string[i].isalnum():
+                i += 1
+            rel_name = string[:i]
+            rest = string[i:]
+            assert rest[0] == '('
+            rest = rest[1:]
+            args = []
+            if rest[0] == ')':
+                rest = rest[1:]
+            else:
+                while True:
+                    arg, rest = Term._parse_prefix(rest)
+                    args.append(arg)
+                    if rest[0] == ')':
+                        rest = rest[1:]
+                        break
+                    assert rest[0] == ','
+                    rest = rest[1:]
+            return Formula(rel_name, args), rest
+        term, rest = Term._parse_prefix(string)
+        assert rest[0] == '='
+        rest = rest[1:]
+        term2, rest = Term._parse_prefix(rest)
+        return Formula('=', [term, term2]), rest
 
     @staticmethod
     def parse(string: str) -> Formula:
@@ -563,17 +575,17 @@ class Formula:
             A set of all constant names used in the current formula.
         """
         # Task 7.6a
-        result = set()
-        if hasattr(self, 'arguments') and self.arguments is not None:
+        if is_equality(self.root) or is_relation(self.root):
+            result = set()
             for arg in self.arguments:
-                result.update(arg.constants())
-        if hasattr(self, 'first') and self.first is not None:
-            result.update(self.first.constants())
-        if hasattr(self, 'second') and self.second is not None:
-            result.update(self.second.constants())
-        if hasattr(self, 'statement') and self.statement is not None:
-            result.update(self.statement.constants())
-        return result
+                result |= arg.constants()
+            return result
+        elif is_unary(self.root):
+            return self.first.constants()
+        elif is_binary(self.root):
+            return self.first.constants() | self.second.constants()
+        else:  # quantifier
+            return self.statement.constants()
 
     def variables(self) -> Set[str]:
         """Finds all variable names in the current formula.
@@ -582,19 +594,17 @@ class Formula:
             A set of all variable names used in the current formula.
         """
         # Task 7.6b
-        result = set()
-        if hasattr(self, 'arguments') and self.arguments is not None:
+        if is_equality(self.root) or is_relation(self.root):
+            result = set()
             for arg in self.arguments:
-                result.update(arg.variables())
-        if hasattr(self, 'first') and self.first is not None:
-            result.update(self.first.variables())
-        if hasattr(self, 'second') and self.second is not None:
-            result.update(self.second.variables())
-        if hasattr(self, 'variable') and self.variable is not None:
-            result.add(self.variable)
-        if hasattr(self, 'statement') and self.statement is not None:
-            result.update(self.statement.variables())
-        return result
+                result |= arg.variables()
+            return result
+        elif is_unary(self.root):
+            return self.first.variables()
+        elif is_binary(self.root):
+            return self.first.variables() | self.second.variables()
+        else:  # quantifier
+            return {self.variable} | self.statement.variables()
 
     def free_variables(self) -> Set[str]:
         """Finds all variable names that are free in the current formula.
@@ -604,19 +614,17 @@ class Formula:
             only within a scope of a quantification on that variable name.
         """
         # Task 7.6c
-        result = set()
-        if hasattr(self, 'arguments') and self.arguments is not None:
+        if is_equality(self.root) or is_relation(self.root):
+            result = set()
             for arg in self.arguments:
-                result.update(arg.variables())
-        if hasattr(self, 'first') and self.first is not None:
-            result.update(self.first.free_variables())
-        if hasattr(self, 'second') and self.second is not None:
-            result.update(self.second.free_variables())
-        if hasattr(self, 'statement') and self.statement is not None:
-            result.update(self.statement.free_variables())
-        if hasattr(self, 'variable') and self.variable is not None:
-            result.discard(self.variable)
-        return result
+                result |= arg.variables()
+            return result
+        elif is_unary(self.root):
+            return self.first.free_variables()
+        elif is_binary(self.root):
+            return self.first.free_variables() | self.second.free_variables()
+        else:
+            return self.statement.free_variables() - {self.variable}
 
     def functions(self) -> Set[Tuple[str, int]]:
         """Finds all function names in the current formula, along with their
@@ -627,17 +635,17 @@ class Formula:
             all function names used in the current formula.
         """
         # Task 7.6d
-        result = set()
-        if hasattr(self, 'arguments') and self.arguments is not None:
+        if is_equality(self.root) or is_relation(self.root):
+            result = set()
             for arg in self.arguments:
-                result.update(arg.functions())
-        if hasattr(self, 'first') and self.first is not None:
-            result.update(self.first.functions())
-        if hasattr(self, 'second') and self.second is not None:
-            result.update(self.second.functions())
-        if hasattr(self, 'statement') and self.statement is not None:
-            result.update(self.statement.functions())
-        return result
+                result |= arg.functions()
+            return result
+        elif is_unary(self.root):
+            return self.first.functions()
+        elif is_binary(self.root):
+            return self.first.functions() | self.second.functions()
+        else:
+            return self.statement.functions()
 
     def relations(self) -> Set[Tuple[str, int]]:
         """Finds all relation names in the current formula, along with their
@@ -648,16 +656,16 @@ class Formula:
             all relation names used in the current formula.
         """
         # Task 7.6e
-        result = set()
         if is_relation(self.root):
-            result.add((self.root, len(self.arguments)))
-        if hasattr(self, 'first') and self.first is not None:
-            result.update(self.first.relations())
-        if hasattr(self, 'second') and self.second is not None:
-            result.update(self.second.relations())
-        if hasattr(self, 'statement') and self.statement is not None:
-            result.update(self.statement.relations())
-        return result
+            return {(self.root, len(self.arguments))}
+        elif is_equality(self.root):
+            return set()
+        elif is_unary(self.root):
+            return self.first.relations()
+        elif is_binary(self.root):
+            return self.first.relations() | self.second.relations()
+        else:
+            return self.statement.relations()
 
     def substitute(self, substitution_map: Mapping[str, Term],
                    forbidden_variables: AbstractSet[str] = frozenset()) -> \
